@@ -167,7 +167,7 @@ resource "aws_route_table_association" "private_b" {
 }
 
 resource "aws_security_group" "upload_lambda" {
-  name        = "sg-upload-lambda-${var.environment}"
+  name        = "upload-lambda-${var.environment}"
   description = "Security group for upload lambda"
   vpc_id      = aws_vpc.main.id
 
@@ -185,7 +185,7 @@ resource "aws_security_group" "upload_lambda" {
 }
 
 resource "aws_security_group" "crop_lambda" {
-  name        = "sg-crop-lambda-${var.environment}"
+  name        = "crop-lambda-${var.environment}"
   description = "Security group for crop lambda"
   vpc_id      = aws_vpc.main.id
 
@@ -203,7 +203,7 @@ resource "aws_security_group" "crop_lambda" {
 }
 
 resource "aws_security_group" "vpce_sqs" {
-  name        = "sg-vpce-sqs-${var.environment}"
+  name        = "vpce-sqs-${var.environment}"
   description = "Security group for SQS VPC endpoint"
   vpc_id      = aws_vpc.main.id
 
@@ -215,7 +215,7 @@ resource "aws_security_group" "vpce_sqs" {
   }
 
   tags = {
-    Name        = "sg-vpce-sqs-${var.environment}"
+    Name        = "vpce-sqs-${var.environment}"
     Environment = var.environment
   }
 }
