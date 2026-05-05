@@ -1,178 +1,71 @@
-# Image Processor — Infrastructure as Code
+# Image Processor — Infraestructura como Código
 
-Serverless image processing architecture deployed on AWS using Terraform, supporting three independent environments: `dev`, `qa`, and `prod`.
-
----
-
-## Architecture Overview
-
-```
-Client → API Gateway HTTP v2 (POST /upload) → upload-lambda → S3 (uploads/)
-                                                                     ↓
-                                                              SQS Queue
-                                                                     ↓
-                                                          crop-lambda → S3 (processed/)
-```
-
-### AWS Services
-
-| Service | Configuration |
-|---|---|
-| API Gateway HTTP v2 | Route: POST /upload, CORS enabled, TLS 1.2+, throttling 10,000 rps |
-| Lambda (upload) | Runtime: nodejs20.x, Handler: index.handler, Env vars: S3_BUCKET, UPLOAD_PREFIX |
-| Lambda (crop) | Runtime: nodejs20.x, Handler: index.handler, Memory: 512 MB, Timeout: 60s |
-| S3 | SSE-AES256, versioning enabled, lifecycle: uploads 30d / processed 90d |
-| SQS | Standard queue, visibility timeout 360s, DLQ after 3 failed attempts |
-| VPC | CIDR 10.0.0.0/16, 2 public subnets, 2 private subnets, 2 NAT Gateways |
-| VPC Endpoints | S3 Gateway Endpoint (free), SQS Interface Endpoint |
-| IAM | Least-privilege roles per lambda |
-| CloudWatch | Log groups with 14-day retention, DLQ alarm |
+Arquitectura en AWS para subir y procesar imágenes, desplegada con Terraform en tres entornos: dev, qa y prod.
 
 ---
 
-## Project Structure
+## Requisitos necesarios
 
-```
-image-processor/
-├── modules/
-│   ├── api_gateway/
-│   ├── cloudwatch/
-│   ├── iam/
-│   ├── lambda/
-│   ├── networking/
-│   ├── s3/
-│   └── sqs/
-├── environments/
-│   ├── dev/
-│   ├── qa/
-│   └── prod/
-├── lambdas/
-│   ├── upload-lambda/
-│   └── crop-lambda/
-└── README.md
-```
+Tener instalado Terraform, AWS CLI y Node.js
+
+Configurar las credenciales de AWS ejecutando `aws configure` e ingresando el Access Key ID, Secret Access Key, región us-east-1 y formato json.
+
+Verificar la conexión con `aws sts get-caller-identity`.
 
 ---
 
-## Prerequisites
+## Instalación de dependencias
 
-- Terraform >= 1.5.0
-- AWS CLI configured with valid credentials
-- Node.js >= 20.x
+Ingresar a la carpeta `lambdas/upload-lambda` y ejecutar `npm install`.
 
----
-
-## Initial Setup
-
-Install lambda dependencies before the first deployment:
-
-```bash
-cd lambdas/upload-lambda
-npm install
-
-cd ../crop-lambda
-npm install
-```
-
-Update the `suffix` value in each `terraform.tfvars` file (dev, qa, prod) to ensure a globally unique S3 bucket name:
-
-```hcl
-suffix = "your-unique-suffix"
-```
+Ingresar a la carpeta `lambdas/crop-lambda` y ejecutar `npm install --os=linux --cpu=x64 --libc=glibc`. Este comando es necesario porque la librería sharp requiere binarios compilados para Linux (acá se tuvo problemas), que es el entorno donde ejecuta Lambda, independientemente del sistema operativo de desarrollo.
 
 ---
 
-## Deployment
+## Configuración de entornos
 
-### DEV
+Cada entorno tiene su propio archivo `terraform.tfvars` dentro de su carpeta correspondiente en `environments/`. Antes del primer despliegue, editar ese archivo en cada entorno y reemplazar el valor de `suffix` por un identificador único personal. Este valor se usa para garantizar que el nombre del bucket S3 sea único globalmente en AWS.
 
-```bash
-cd environments/dev
-terraform init
-terraform plan
-terraform apply
-```
-
-### QA
-
-```bash
-cd environments/qa
-terraform init
-terraform plan
-terraform apply
-```
-
-### PROD
-
-```bash
-cd environments/prod
-terraform init
-terraform plan
-terraform apply
-```
-
-Upon completion, the output will display:
-
-```
-api_endpoint = "https://<id>.execute-api.us-east-1.amazonaws.com/upload"
-bucket_name  = "image-processor-<env>-images-<suffix>"
-```
+Los archivos `terraform.tfvars` están incluidos en `.gitignore` por contener datos sensibles y se evita subir al repositorio.
 
 ---
 
-## Environment Differences
+## Despliegue
 
-| Variable | DEV | QA | PROD |
-|---|---|---|---|
-| `upload_lambda_memory` | 128 MB | 256 MB | 256 MB |
-| `crop_lambda_memory` | 256 MB | 512 MB | 512 MB |
-| S3 bucket | image-processor-dev-... | image-processor-qa-... | image-processor-prod-... |
-| SQS queue | ...-dev-image-queue | ...-qa-image-queue | ...-prod-image-queue |
+Para desplegar el entorno dev, ingresar a `environments/dev` y ejecutar los siguientes comandos en orden.
 
----
+`terraform init` descarga los providers necesarios de AWS.
 
-## Testing
+`terraform plan` muestra los recursos que se van a crear sin crearlos.
 
-```bash
-BASE64=$(base64 -w 0 image.jpg)
+`terraform apply` crea todos los recursos en AWS. Confirmar escribiendo yes cuando lo solicite.
 
-curl -X POST https://<api-endpoint>/upload \
-  -H "Content-Type: application/json" \
-  -d "{\"image\": \"$BASE64\", \"contentType\": \"image/jpeg\"}"
-```
+Al finalizar, Terraform muestra la URL del endpoint y el nombre del bucket creado.
 
-Expected response:
-
-```json
-{
-  "message": "Image uploaded successfully",
-  "key": "uploads/<uuid>.jpg",
-  "bucket": "image-processor-dev-images-<suffix>"
-}
-```
+Repetir el mismo proceso para qa ingresando a `environments/qa` y para prod ingresando a `environments/prod`.
 
 ---
 
-## Destroy Resources
+## Prueba del endpoint
 
-```bash
-cd environments/dev
-terraform destroy
+Desde PowerShell en Windows, ejecutar lo siguiente reemplazando la ruta de la imagen y la URL del endpoint con los valores reales.
+
+```powershell
+$image = [Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\ruta\imagen.jpg"))
+$body = '{"image":"' + $image + '","contentType":"image/jpeg"}'
+Invoke-RestMethod -Uri "https://<api-endpoint>/upload" -Method POST -ContentType "application/json" -Body $body
 ```
 
-> **Note:** Some resources require manual deletion before or after `terraform destroy`:
-> - S3 bucket: must be emptied manually if `force_destroy` is not set.
-> - CloudWatch Log Groups: may persist as remnants after destroy.
-> - SQS in-flight messages: the queue may delay deletion if messages are being processed.
->
-> Document any errors encountered during destroy as part of the lab report.
+La respuesta esperada indica que la imagen fue subida correctamente e incluye la clave del archivo en S3.
+
+Luego de unos 30 segundos, ingresar al bucket en la consola de AWS y verificar que la imagen original aparece en la carpeta `uploads/` y la imagen recortada aparece en `processed/` con el sufijo `_circular.png`. La imagen de salida es un PNG de 40x40 px con recorte circular y fondo transparente.
+
+Los formatos de imagen aceptados son jpeg, png, gif y webp. El tamaño máximo es 10 MB.
 
 ---
 
-## Allowed Image Formats
+## Destruir recursos
 
-`image/jpeg` · `image/png` · `image/gif` · `image/webp`
+Ejecutar `terraform destroy` dentro de cada carpeta de entorno, comenzando por prod, luego qa y finalmente dev. Confirmar escribiendo yes cuando lo solicite.
 
-Maximum upload size: **10 MB**
-
-Output format: **40×40 px circular PNG with transparent background**
+Algunos recursos pueden requerir eliminación manual desde la consola de AWS.
